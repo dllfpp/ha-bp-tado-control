@@ -29,3 +29,7 @@ The automation triggers every 15 minutes and checks the time of day and the heat
 
 ## Action:
 The action recalculates and updates the offset value based on the temperature difference between the selected Zigbee sensor and the climate entity.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
