@@ -3,6 +3,11 @@
 
 This blueprint allows you to dynamically update the temperature offset of a Tado climate entity (or another climate device) based on a Zigbee sensor's readings, while providing control to enable or disable the automation based on the climate entity's operating mode (specifically, when in HEAT mode).
 
+> **Using the [Tado Hijack](https://github.com/banter240/tado_hijack) integration?** You no longer need
+> this blueprint: Tado Hijack handles both window sensors (with no 1-hour expiry) and offset
+> calibration natively. See [docs/tado-hijack-windows-and-offset.md](docs/tado-hijack-windows-and-offset.md).
+> The blueprint stays here for setups with the core Tado integration only.
+
 ## Use Case:
 You may want to adjust the temperature offset on your climate entity based on a more accurate or strategically placed sensor. This blueprint enables you to automate that adjustment within a specified time range and only when the heating system is on.
 
