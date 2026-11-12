@@ -1,190 +1,218 @@
 blueprint:
-  name: "Update Entity Offset with Switch 🔥🌡️ + Window Sensor"
+  name: "Tado TRV offset calibration 🔥🌡️ (+ optional window/alarm sensor)"
   description: >
-    Update the offset attribute of an entity based on another sensor's state, with an on/off control.
-    If a window sensor opens for at least 2 minutes, turn HVAC OFF; when it closes, set HVAC to AUTO.
+    Keeps a Tado thermostatic valve (TRV) reading in line with a separate room temperature
+    sensor by adjusting the valve's temperature offset, only within a time window and,
+    optionally, only while it is heating. Offset writes are rate-limited because each one
+    makes the valve motor close and reopen.
+
+    Works with the core Tado integration and with Tado Hijack (pick the offset number entity).
+
+    Optional: one or more window/door contacts (for example from an alarm system). When any
+    of them stays open for the chosen delay the valve is switched off; when all are closed it
+    goes back to the chosen mode. Leave it empty if your integration already handles windows
+    (Tado Hijack does).
   domain: automation
+  source_url: https://github.com/dllfpp/ha-bp-tado-control/blob/main/temp_sensor_calibration.yaml
 
   input:
-    sensor_to_monitor:
-      name: Zigbee Sensor to Monitor
-      description: The sensor whose state will be used to update the "offset" attribute
+    valve:
+      name: Valve
+      description: The climate entity of the Tado valve (TRV) to calibrate
       selector:
         entity:
-          domain:
-            - sensor
-          device_class:
-            - temperature
-          multiple: false
-
-    entity_to_update:
-      name: Tado Entity to Update
-      description: The climate entity whose "offset" attribute will be updated
+          domain: climate
+    room_sensor:
+      name: Room temperature sensor
+      description: The separate sensor whose reading the valve must match
       selector:
         entity:
-          domain:
-            - climate
-          multiple: false
-
-    window_sensor:
-      name: Window Sensor
-      description: Binary sensor (preferred) or switch indicating window open/closed
+          domain: sensor
+          device_class: temperature
+    offset_entity:
+      name: Offset entity (Tado Hijack, optional)
+      description: >
+        The number entity holding the valve temperature offset (Tado Hijack).
+        Leave empty with the core Tado integration: the tado.set_climate_temperature_offset
+        action is used instead.
+      default: []
       selector:
         entity:
-          domain:
-            - binary_sensor
-            - switch
-            - input_boolean
-          multiple: false
-
+          domain: number
     threshold:
       name: Threshold
-      description: The maximum difference between the two sensors to trigger the automation
+      description: Minimum difference between valve and room sensor before the offset is corrected
+      default: 1
       selector:
         number:
-          min: 0.0
-          max: 10.0
+          min: 0.5
+          max: 5
           step: 0.5
           unit_of_measurement: °C
-          mode: slider
-
-    start_time:
-      name: When the automation starts.
-      selector:
-        time: {}
-
-    end_time:
-      name: When the automation stops.
-      selector:
-        time: {}
-
-    time_interval_minutes:
-      name: Time Interval (minutes)
-      description: The interval in minutes for the calibration to trigger
+    interval:
+      name: Check every
       default: 15
       selector:
         number:
-          min: 10
+          min: 5
           max: 60
-          unit_of_measurement: minutes
-
-    enable_switch:
-      name: Enable Automation only when Heating
-      description: Enable or disable the automation only when entity is on HEAT status
+          step: 5
+          unit_of_measurement: min
+    min_hours_between_writes:
+      name: Minimum hours between offset writes
+      description: Each write makes the valve motor close and reopen; fewer writes save the battery
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 24
+          step: 1
+          unit_of_measurement: h
+    start_time:
+      name: Active from
+      default: "06:00:00"
+      selector:
+        time: {}
+    end_time:
+      name: Active until
+      default: "23:00:00"
+      selector:
+        time: {}
+    only_when_heating:
+      name: Only while heating
+      description: Correct the offset only while the valve is actually heating
       default: true
       selector:
         boolean: {}
+    window_sensors:
+      name: Window / alarm contacts (optional)
+      description: >
+        Door or window contacts, for example from an alarm system. Empty = window
+        handling off.
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    window_delay:
+      name: Window open for
+      description: How long a contact must stay open before the valve is switched off
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 30
+          unit_of_measurement: min
+    resume_mode:
+      name: Mode when windows close
+      default: auto
+      selector:
+        select:
+          options:
+            - auto
+            - heat
 
-  source_url: https://github.com/dllfpp/home-assistant/blob/main/temp_sensor_calibration.yaml
+mode: queued
+max_exceeded: silent
 
 variables:
-  entity_to_update: !input entity_to_update
-  sensor_to_monitor: !input sensor_to_monitor
-  window_sensor: !input window_sensor
-  current_time: "{{ now().strftime('%H:%M') }}"
-  friendly_name: "{{ state_attr(entity_to_update, 'friendly_name') }}"
-  interval: !input time_interval_minutes
-  enable_switch: !input enable_switch
+  valve: !input valve
+  room_sensor: !input room_sensor
+  offset_entity: !input offset_entity
+  threshold: !input threshold
+  interval: !input interval
+  min_hours: !input min_hours_between_writes
+  only_when_heating: !input only_when_heating
+  window_sensors: !input window_sensors
+  resume_mode: !input resume_mode
+  has_offset_entity: "{{ offset_entity not in [none, '', []] }}"
+  current_offset: >
+    {% if has_offset_entity %}{{ states(offset_entity) | float(0) }}
+    {% else %}{{ state_attr(valve, 'offset_celsius') | float(0) }}{% endif %}
+  new_offset: >
+    {{ [[ current_offset + states(room_sensor) | float(0)
+          - state_attr(valve, 'current_temperature') | float(0), -10 ] | max, 10 ] | min | round(1) }}
 
-trigger:
-  # Original calibration timer trigger
-  - platform: time_pattern
-    minutes: "*"
+triggers:
+  - trigger: time_pattern
+    minutes: "/5"
     id: calibrate
-
-  # Window opened -> HVAC OFF (only if open/on for at least 2 minutes)
-  - platform: state
-    entity_id: !input window_sensor
-    to:
-      - "on"
-      - "open"
+  - trigger: state
+    entity_id: !input window_sensors
+    to: "on"
     for:
-      minutes: 2
+      minutes: !input window_delay
     id: window_open
-
-  # Window closed -> HVAC AUTO (immediate)
-  - platform: state
-    entity_id: !input window_sensor
-    to:
-      - "off"
-      - "closed"
+  - trigger: state
+    entity_id: !input window_sensors
+    to: "off"
     id: window_closed
 
-action:
+actions:
   - choose:
-      # 1) Window opened for 2 minutes -> set HVAC OFF
-      - conditions:
+      - alias: A window/alarm contact is open -> valve off
+        conditions:
           - condition: trigger
             id: window_open
         sequence:
-          - service: climate.set_hvac_mode
+          - action: climate.set_hvac_mode
             target:
-              entity_id: !input entity_to_update
+              entity_id: !input valve
             data:
               hvac_mode: "off"
 
-      # 2) Window closed -> set HVAC AUTO
-      - conditions:
+      - alias: All contacts closed -> valve back on
+        conditions:
           - condition: trigger
             id: window_closed
+          - condition: template
+            value_template: "{{ window_sensors | select('is_state', 'on') | list | count == 0 }}"
+          - condition: state
+            entity_id: !input valve
+            state: "off"
         sequence:
-          - service: climate.set_hvac_mode
+          - action: climate.set_hvac_mode
             target:
-              entity_id: !input entity_to_update
+              entity_id: !input valve
             data:
-              hvac_mode: "auto"
+              hvac_mode: "{{ resume_mode }}"
 
-      # 3) Scheduled calibration (your original logic) runs only on time trigger
-      - conditions:
+      - alias: Offset calibration
+        conditions:
           - condition: trigger
             id: calibrate
-          - condition: and
-            conditions:
-              - condition: time
-                after: !input start_time
-                before: !input end_time
-              - condition: template
-                value_template: >
-                  {{ (now().minute % interval | int) == 0 }}
-              - condition: or
-                conditions:
-                  - condition: template
-                    value_template: "{{ enable_switch == false }}"
-                  - condition: and
-                    conditions:
-                      - condition: template
-                        value_template: "{{ enable_switch == true }}"
-                      - condition: state
-                        entity_id: !input entity_to_update
-                        attribute: hvac_action
-                        state: heating
+          - condition: time
+            after: !input start_time
+            before: !input end_time
+          - condition: template
+            value_template: "{{ now().minute % (interval | int(15)) == 0 }}"
+          - condition: template
+            value_template: >
+              {{ not only_when_heating or state_attr(valve, 'hvac_action') == 'heating' }}
+          - condition: template
+            value_template: >
+              {{ has_value(room_sensor) and state_attr(valve, 'current_temperature') is number
+                 and (states(room_sensor) | float - state_attr(valve, 'current_temperature') | float) | abs
+                     > threshold | float
+                 and new_offset != current_offset | round(1) }}
+          - alias: Rate limit between writes
+            condition: template
+            value_template: >
+              {% set last = states[offset_entity].last_changed if has_offset_entity else states[valve].last_changed %}
+              {{ not has_offset_entity or (now() - last).total_seconds() > min_hours | float * 3600 }}
         sequence:
           - if:
-              - condition: numeric_state
-                entity_id:
-                  - !input sensor_to_monitor
-                  - !input entity_to_update
-                value_template: >
-                  {{ (states(sensor_to_monitor)|float - state_attr(entity_to_update,'current_temperature')|float)|abs }}
-                above: !input threshold
+              - condition: template
+                value_template: "{{ has_offset_entity }}"
             then:
-              - service: tado.set_climate_temperature_offset
-                data:
-                  offset: >
-                    {{
-                      ( state_attr(entity_to_update,'offset_celsius')|float
-                        if state_attr(entity_to_update,'offset_celsius') is not none else 0
-                      )
-                      +
-                      (
-                        (states(sensor_to_monitor)|float - state_attr(entity_to_update,'current_temperature')|float)
-                        if states(sensor_to_monitor) is not none and state_attr(entity_to_update,'current_temperature') is not none
-                        else 0
-                      )
-                      | round(1)
-                    }}
+              - action: number.set_value
                 target:
-                  entity_id: !input entity_to_update
-
-trace:
-  stored_traces: 240
+                  entity_id: "{{ offset_entity }}"
+                data:
+                  value: "{{ new_offset }}"
+            else:
+              - action: tado.set_climate_temperature_offset
+                target:
+                  entity_id: !input valve
+                data:
+                  offset: "{{ new_offset }}"

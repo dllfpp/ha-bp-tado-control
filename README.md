@@ -1,39 +1,48 @@
-# Blueprint: Update Entity Offset with Switch Control
-## Tado/Zigbee/Working Hours/ON-OFF Switch
+# Blueprint: Tado TRV offset calibration
 
 This blueprint allows you to dynamically update the temperature offset of a Tado climate entity (or another climate device) based on a Zigbee sensor's readings, while providing control to enable or disable the automation based on the climate entity's operating mode (specifically, when in HEAT mode).
 
-> **Using the [Tado Hijack](https://github.com/banter240/tado_hijack) integration?** You no longer need
-> this blueprint: Tado Hijack handles both window sensors (with no 1-hour expiry) and offset
-> calibration natively. See [docs/tado-hijack-windows-and-offset.md](docs/tado-hijack-windows-and-offset.md).
-> The blueprint stays here for setups with the core Tado integration only.
+> **Tado Hijack users:** it can calibrate offsets and handle windows natively, see
+> [docs/tado-hijack-windows-and-offset.md](docs/tado-hijack-windows-and-offset.md). This blueprint supports
+> both the core Tado integration and Tado Hijack (pick its offset entity).
 
-## Use Case:
-You may want to adjust the temperature offset on your climate entity based on a more accurate or strategically placed sensor. This blueprint enables you to automate that adjustment within a specified time range and only when the heating system is on.
+## What it does
 
-## How It Works:
-- `Sensor Monitoring:` You specify a Zigbee temperature sensor whose state will be monitored.
-- `Entity Update:` You choose a climate entity (like Tado) whose temperature offset will be adjusted.
-- `Threshold Control:` You can set a maximum allowed temperature difference between the monitored sensor and the climate entity before triggering an update.
-- `Time Range:` You can define start and stop times for when the automation should be active.
-- `Heat Mode Control:` There's an optional toggle to enable or disable this automation based on whether the climate entity is in HEAT mode. If the toggle is off, the automation will run regardless of the heating mode.
+- **Offset calibration:** at the chosen interval it compares the valve reading with a
+  separate room sensor and, if they differ by more than the threshold, corrects the valve
+  temperature offset. Only inside the time window and, optionally, only while heating.
+- **Battery saving:** offset writes are rate-limited (default one every 2 hours per valve),
+  because each write makes the valve motor close and reopen.
+- **Window / alarm contacts (optional):** pick one or more door/window contacts (for example
+  from an alarm system). If any stays open for the chosen delay the valve is switched off;
+  when all are closed it goes back to `auto` (or `heat`). Leave it empty if your integration
+  already handles windows.
 
-## Inputs:
-- `Zigbee Sensor to Monitor:` The temperature sensor whose readings will determine the temperature offset.
-- `Tado Entity to Update:` The climate entity (Tado or similar) whose offset will be updated.
-- `Threshold:` The temperature difference required to trigger an update.
-- `Start Time:` Time when the automation starts.
-- `End Time:` Time when the automation ends.
-- `Enable Automation Only When Heating:` Boolean to control whether the automation only runs when the climate entity is in HEAT mode.
+## Inputs
 
-## Example:
-You have a Zigbee sensor in your living room and want to adjust the offset on your Tado thermostat based on the difference between the Tado’s temperature reading and the more accurate one from the Zigbee sensor. This automation allows you to apply this adjustment automatically, but only during specific times (e.g., 6 AM to 10 PM) and only when the Tado is heating.
+| Input | Required | Description |
+|---|---|---|
+| Valve | yes | Climate entity of the Tado TRV |
+| Room temperature sensor | yes | Separate temperature sensor the valve must match |
+| Offset entity | no | Tado Hijack number entity for the offset; empty = core Tado action `tado.set_climate_temperature_offset` |
+| Threshold | no (1 °C) | Minimum difference before correcting |
+| Check every | no (15 min) | How often the comparison runs |
+| Minimum hours between offset writes | no (2 h) | Rate limit (applies with the offset entity) |
+| Active from / until | no (06:00–23:00) | Time window |
+| Only while heating | no (on) | Correct only while the valve is heating |
+| Window / alarm contacts | no | One or more `binary_sensor` contacts |
+| Window open for | no (2 min) | Delay before switching the valve off |
+| Mode when windows close | no (auto) | `auto` or `heat` |
 
-## Trigger & Condition:
-The automation triggers every 15 minutes and checks the time of day and the heating mode condition (if enabled). If the difference between the monitored sensor and the Tado’s temperature exceeds the threshold, the Tado’s offset is updated.
+## Installation
 
-## Action:
-The action recalculates and updates the offset value based on the temperature difference between the selected Zigbee sensor and the climate entity.
+[![Open your Home Assistant instance and show the blueprint import dialog.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fdllfpp%2Fha-bp-tado-control%2Fblob%2Fmain%2Ftemp_sensor_calibration.yaml)
+
+Or: Settings → Automations & scenes → Blueprints → Import blueprint, and paste
+`https://github.com/dllfpp/ha-bp-tado-control/blob/main/temp_sensor_calibration.yaml`.
+Then create one automation per valve.
+
+Requires Home Assistant 2024.10 or newer.
 
 ## License
 
